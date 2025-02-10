@@ -4,17 +4,38 @@ import json
 import os
 import re
 from google.cloud import translate_v2 as translate
+import logging
 
 # APIキーの設定（環境変数から取得）
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 translate_client = translate.Client()
 
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
 
 def translate_to_japanese(text):
     """Translation AI を使って英語を日本語に翻訳"""
-    result = translate_client.translate(text, target_language="ja")
+    result = translate_client.translate(
+        text, target_language="ja", source_language="en"
+    )
     return result["translatedText"]
+
+
+def parse_ingredients(response_text):
+    # 正規表現でリスト部分を抽出
+    match = re.search(r"\[(.*?)\]", response_text, re.DOTALL)
+    if not match:
+        return {"ingredients": []}  # マッチしなければ空リストを返す
+
+    # リストの中身を取得し、各アイテムをクリーンアップ
+    raw_ingredients = match.group(1).split("\n")
+    cleaned_ingredients = [
+        item.strip().strip('"') for item in raw_ingredients if item.strip()
+    ]
+
+    return {"ingredients": cleaned_ingredients}
 
 
 @functions_framework.http
@@ -25,8 +46,20 @@ def detect_ingredients(request):
     # 入力チェック
     if "image" not in request_json:
         return {"error": "Image is required"}, 400
+    if "mime_type" not in request_json:
+        return {"error": "Mime_type is required"}, 400
 
     encoded_image = request_json["image"]
+    mime_type = request_json["mime_type"]
+    pronpt = """
+        Identify the food ingredients present in this image. Return the result strictly as a JSON object in the following format:
+
+        {
+            "ingredients": ["ingredient1", "ingredient2", "ingredient3"]
+        }
+
+        Do not include any extra text or explanations. Ensure the output is valid JSON.
+    """
 
     try:
         # Gemini Vision API で画像解析
@@ -35,12 +68,10 @@ def detect_ingredients(request):
             [
                 {
                     "parts": [
-                        {
-                            "text": "Identify the food ingredients present in this image. Return the list in JSON format."
-                        },
+                        {"text": pronpt},
                         {
                             "inline_data": {
-                                "mime_type": "image/png",
+                                "mime_type": mime_type,
                                 "data": encoded_image,
                             }
                         },
@@ -51,6 +82,7 @@ def detect_ingredients(request):
 
         # レスポンスの raw text
         raw_text = response.text
+        logger.info(raw_text)
 
         # 正規表現でJSON部分を抽出
         match = re.search(r"```json\s*({.*?})\s*```", raw_text, re.DOTALL)
@@ -66,10 +98,7 @@ def detect_ingredients(request):
             }
         else:
             # もしJSONフォーマットでない場合、行ごとに解析
-            ingredients_list = [
-                line.strip().strip('"') for line in raw_text.split("\n") if line.strip()
-            ]
-            ingredients = {"ingredients": ingredients_list}
+            ingredients = parse_ingredients(raw_text)
 
         return json.dumps(ingredients, indent=2, ensure_ascii=False), 200
 
