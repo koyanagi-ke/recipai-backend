@@ -48,7 +48,7 @@ def generate_recipe(request):
         response = model.generate_content(
             [
                 f"Create a recipe using only the following ingredients: {', '.join(ingredients)}.",
-                "Do not add any other ingredients that are not listed.",
+                "Do not add any ingredients that are not listed, except for seasonings.",
                 f"The dish should feel {feeling}.",
                 "Return the result as a JSON object with 'title' and 'steps' (list of step-by-step instructions).",
                 "The JSON format should match this example:",
